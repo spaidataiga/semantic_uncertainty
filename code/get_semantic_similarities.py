@@ -32,12 +32,16 @@ random.seed(seed_value)
 
 np.random.seed(seed_value)
 
+model_name = "mistralai/Mistral-7B-Instruct-v0.1" #"/projects/copenlu/data/models/models--google--gemma-7b-it/"
+
+
 #Fix torch random seed
 torch.manual_seed(seed_value)
 
-os.environ["HF_DATASETS_CACHE"] = config.hf_datasets_cache
+# os.environ["HF_DATASETS_CACHE"] = config.hf_datasets_cache
 
-generation_tokenizer = AutoTokenizer.from_pretrained(f"facebook/opt-350m", use_fast=False, cache_dir=config.data_dir)
+generation_tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False, token=config.hf_token) # cache_dir=config.hf_cache_dir)
+
 
 tokenizer = AutoTokenizer.from_pretrained("microsoft/deberta-large-mnli")
 model = AutoModelForSequenceClassification.from_pretrained("microsoft/deberta-large-mnli").cuda()

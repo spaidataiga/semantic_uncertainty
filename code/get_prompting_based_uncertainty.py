@@ -35,7 +35,7 @@ device = torch.device('cuda')
 #Fix torch random seed
 torch.manual_seed(seed_value)
 
-os.environ["HF_DATASETS_CACHE"] = config.hf_datasets_cache
+# os.environ["HF_DATASETS_CACHE"] = config.hf_datasets_cache
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--generation_model', type=str, default='opt-1.3b')
@@ -44,12 +44,14 @@ parser.add_argument('--run_id_for_evaluation', type=str, default='run_1')
 args = parser.parse_args()
 
 wandb.init(project='nlg_uncertainty', id=args.run_id_for_few_shot_prompt, config=args, resume='allow')
-model_name = wandb.config.model
 
-generation_tokenizer = AutoTokenizer.from_pretrained(f"facebook/opt-350m", use_fast=False, cache_dir=config.data_dir)
-model = AutoModelForCausalLM.from_pretrained(f"facebook/{model_name}",
-                                             torch_dtype=torch.float16,
-                                             cache_dir=config.data_dir).cuda()
+model_name = "mistralai/Mistral-7B-Instruct-v0.1"
+
+generation_tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False, cache_dir=config.data_dir, token=config.hf_token)
+model = AutoModelForCausalLM.from_pretrained(model_name,
+                                            #  torch_dtype=torch.float16,
+                                            load_in_4bit=True,
+                                             cache_dir=config.data_dir,token=config.hf_token).cuda()
 
 if model_name == 'opt-30b':
     accelerate.dispatch_model(model, device_map=device_map)

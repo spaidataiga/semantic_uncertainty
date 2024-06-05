@@ -33,15 +33,17 @@ np.random.seed(seed_value)
 #Fix torch random seed
 torch.manual_seed(seed_value)
 
-os.environ["HF_DATASETS_CACHE"] = config.hf_datasets_cache
+model_name = "mistralai/Mistral-7B-Instruct-v0.1"
 
-generation_tokenizer = AutoTokenizer.from_pretrained(f"facebook/opt-350m", use_fast=False, cache_dir=config.data_dir)
+# os.environ["HF_DATASETS_CACHE"] = config.hf_datasets_cache
+
+generation_tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False, cache_dir=config.data_dir, token=config.hf_token)
 
 wandb.init(project='nlg_uncertainty', id=args.run_id, config=args, resume='allow')
 
 run_name = wandb.run.name
 
-tokenizer = AutoTokenizer.from_pretrained(f"facebook/opt-350m", use_fast=False, cache_dir=config.data_dir)
+tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False, cache_dir=config.data_dir, token=config.hf_token)
 
 with open(f'{config.output_dir}/{run_name}/{args.generation_model}_generations.pkl', 'rb') as infile:
     sequences = pickle.load(infile)

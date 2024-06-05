@@ -32,7 +32,7 @@ np.random.seed(seed_value)
 #Fix torch random seed
 torch.manual_seed(seed_value)
 
-os.environ["HF_DATASETS_CACHE"] = config.hf_datasets_cache
+# os.environ["HF_DATASETS_CACHE"] = config.hf_datasets_cache
 
 wandb.init(project='nlg_uncertainty', id=args.run_id, config=args, resume='allow')
 

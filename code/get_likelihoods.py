@@ -30,17 +30,31 @@ random.seed(seed_value)
 
 np.random.seed(seed_value)
 
+model_name = "mistralai/Mistral-7B-Instruct-v0.1" # "/projects/copenlu/data/models/models--google--gemma-7b-it/"
+
+
 #Fix torch random seed
 torch.manual_seed(seed_value)
 
-os.environ["HF_DATASETS_CACHE"] = config.hf_datasets_cache
+# os.environ["HF_DATASETS_CACHE"] = config.hf_datasets_cache
 
-model = AutoModelForCausalLM.from_pretrained(f"facebook/{args.evaluation_model}",
-                                             torch_dtype=torch.float16,
-                                             cache_dir=config.data_dir).cuda()
-tokenizer = AutoTokenizer.from_pretrained(f"facebook/{args.evaluation_model}",
-                                          use_fast=False,
-                                          cache_dir=config.data_dir)
+# model = AutoModelForCausalLM.from_pretrained(f"facebook/{args.evaluation_model}",
+#                                              torch_dtype=torch.float16,
+#                                              cache_dir=config.data_dir).cuda()
+# tokenizer = AutoTokenizer.from_pretrained(f"facebook/{args.evaluation_model}",
+#                                           use_fast=False,
+#                                           cache_dir=config.data_dir)
+
+model = AutoModelForCausalLM.from_pretrained(model_name,
+                                            #  torch_dtype=torch.float16,
+                                            load_in_4bit=True,
+                                             attn_implementation="flash_attention_2",
+                                             device_map="auto",
+                                             token=config.hf_token).cuda()
+
+
+tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False, token=config.hf_token) # cache_dir=config.hf_cache_dir)
+
 
 wandb.init(project='nlg_uncertainty', id=args.run_id, config=args, resume='allow')
 

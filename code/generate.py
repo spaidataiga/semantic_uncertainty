@@ -3,12 +3,12 @@ import os
 import pathlib
 import pickle
 from lib2to3.pgen2.tokenize import tokenize
-
 import accelerate
 import config
 import datasets
 import evaluate
 import numpy as np
+import pandas as pd
 import torch
 import tqdm
 import wandb
@@ -17,7 +17,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 parser = argparse.ArgumentParser()
 parser.add_argument('--type_of_question', type=str)
 parser.add_argument('--num_generations_per_prompt', type=int, default=5)
-parser.add_argument('--fraction_of_data_to_use', type=float, default=0.9)
+# parser.add_argument('--fraction_of_data_to_use', type=float, default=0.9)
 parser.add_argument('--model', type=str, default='opt-350m')
 parser.add_argument('--run_id', type=str, default='run_1')
 parser.add_argument('--temperature', type=float, default='1.0')
@@ -25,6 +25,8 @@ parser.add_argument('--num_beams', type=int, default='5')
 parser.add_argument('--decoding_method', type=str, default='beam_search')
 parser.add_argument('--top_p', type=float, default=1.0)
 parser.add_argument('--dataset', type=str, default='coqa')
+parser.add_argument('--add_context', type=bool, default=False)
+
 args = parser.parse_args()
 
 wandb.init(project='nlg_uncertainty', id=args.run_id, config=args, resume='allow')
@@ -38,6 +40,8 @@ seed_value = 10
 # 1. Set `PYTHONHASHSEED` environment variable at a fixed value
 import os
 
+model_name = "mistralai/Mistral-7B-Instruct-v0.1" #"/projects/copenlu/data/models/models--google--gemma-7b-it/"
+
 os.environ['PYTHONHASHSEED'] = str(seed_value)
 # 2. Set `python` built-in pseudo-random generator at a fixed value
 import random
@@ -49,46 +53,51 @@ np.random.seed(seed_value)
 #Fix torch random seed
 torch.manual_seed(seed_value)
 
-os.environ["HF_DATASETS_CACHE"] = config.hf_datasets_cache
+# os.environ["HF_DATASETS_CACHE"] = config.hf_datasets_cache
 
-model = AutoModelForCausalLM.from_pretrained(f"facebook/{args.model}",
-                                             torch_dtype=torch.float16,
-                                             cache_dir=config.hf_cache_dir).cuda()
+model = AutoModelForCausalLM.from_pretrained(model_name,
+                                            #  torch_dtype=torch.float16,
+                                             load_in_4bit=True,
+                                             attn_implementation="flash_attention_2",
+                                             device_map="auto").cuda()
 
-if args.model == 'opt-30b':
-    accelerate.dispatch_model(model, device_map=config.device_map)
+# if args.model == 'opt-30b':
+#     accelerate.dispatch_model(model, device_map=config.device_map)
 
-tokenizer = AutoTokenizer.from_pretrained(f"facebook/{args.model}", use_fast=False, cache_dir=config.hf_cache_dir)
+tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False) #cache_dir=config.hf_cache_dir)
 
-opt_models = ['opt-125m', 'opt-350m', 'opt-1.3b', 'opt-2.7b', 'opt-6.7b', 'opt-13b', 'opt-30b']
+test_df = pd.read_pickle("Data/Temporal_partialcontext4.pkl").iloc[:100] # Take first 100
+dataset = datasets.Dataset.from_pandas(test_df)
 
-if args.dataset == 'coqa':
-    dataset = datasets.load_from_disk(f'{config.output_dir}/coqa_dataset')
-    id_to_question_mapping = dict(zip(dataset['id'], dataset['question']))
-elif args.dataset == 'trivia_qa':
-    dataset = datasets.load_from_disk(f'{config.output_dir}/trivia_qa')
+# dataset = datasets.load_from_disk(f'{config.output_dir}/coqa_dataset')
+id_to_question_mapping = dict(zip(dataset['id'], dataset['question']))
 
-if args.fraction_of_data_to_use < 1.0:
-    train_dataset = dataset.train_test_split(test_size=(1 - args.fraction_of_data_to_use), seed=seed_value)['train']
-else:
-    train_dataset = dataset
 
+# if args.fraction_of_data_to_use < 1.0:
+#     train_dataset = dataset.train_test_split(test_size=(1 - args.fraction_of_data_to_use), seed=seed_value)['train']
+# else:
+#     train_dataset = dataset
+
+
+def encode_w_context(examples):
+    return tokenizer(examples['original_text'] + ' Q: ' + examples['question'] + ' A:', truncation=False, padding=False)
 
 def encode(examples):
-    return tokenizer(examples['story'] + ' Q: ' + examples['question'] + ' A:', truncation=False, padding=False)
+    return tokenizer(' Q: ' + examples['question'] + ' A:', truncation=False, padding=False)
 
 
-def encode_and_format_dataset(dataset):
-    dataset = dataset.map(encode, batched=False, load_from_cache_file=False)
+def encode_and_format_dataset(dataset, add_context=False):
+    if add_context:
+        dataset = dataset.map(encode_w_context, batched=False, load_from_cache_file=False)
+    else:
+        dataset = dataset.map(encode, batched=False, load_from_cache_file=False)
+        
     dataset.set_format(type='torch', columns=['input_ids', 'attention_mask'], output_all_columns=True)
 
     return dataset
 
 
-if args.dataset == 'coqa':
-    questions = encode_and_format_dataset(train_dataset)
-elif args.dataset == 'trivia_qa':
-    questions = train_dataset
+questions = encode_and_format_dataset(dataset, add_context=args.add_context)
 
 dataloader = torch.utils.data.DataLoader(questions, batch_size=1)
 
@@ -128,7 +137,7 @@ def get_generations(model, dataloader, number_of_generations):
                                                         eos_token_id=period_token_id,
                                                         bad_words_ids=question_framing_ids)
 
-            input_length = input_ids.shape[1] if args.dataset == 'trivia_qa' else batch['input_ids'].shape[1]
+            input_length = batch['input_ids'].shape[1] #input_ids.shape[1] if args.dataset == 'trivia_qa' else 
             generations = torch.ones((number_of_generations, input_length + max_length_of_generated_sequence),
                                      dtype=torch.long,
                                      device=device)
@@ -148,23 +157,22 @@ def get_generations(model, dataloader, number_of_generations):
             generations = torch.reshape(generations, (-1, number_of_generations, generations.shape[-1]))
             for i in range(generations.shape[0]):
 
-                if args.dataset == 'coqa':
-                    sequence_dict = {
-                        'prompt': batch['input_ids'][i].to('cpu'),
-                        'generations': generations[i].to('cpu'),
-                        'id': batch['id'],
-                        'question': id_to_question_mapping[batch['id'][0]]
-                    }
-                elif args.dataset == 'trivia_qa':
-                    few_shot_question = tokenizer.decode(input_ids[0])
-                    question = few_shot_question.split('Question: ')[-1].split('Answer: ')[0]
-                    sequence_dict = {
-                        'prompt': input_ids[0],
-                        'generations': generations[i],
-                        'id': batch['question_id'],
-                        'few_shot_question': tokenizer.decode(input_ids[0]),
-                        'question': question
-                    }
+                # if args.dataset == 'coqa':
+                #     sequence_dict = {
+                #         'prompt': batch['input_ids'][i].to('cpu'),
+                #         'generations': generations[i].to('cpu'),
+                #         'id': batch['id'],
+                #         'question': id_to_question_mapping[batch['id'][0]]
+                #     }
+                # elif args.dataset == 'trivia_qa':
+                #     few_shot_question = tokenizer.decode(input_ids[0])
+                # question = few_shot_question.split('Question: ')[-1].split('Answer: ')[0]
+                sequence_dict = {
+                    'prompt': input_ids[0],
+                    'generations': generations[i],
+                    'id': batch['question_id'],
+                    'question': batch['question']
+                }
 
                 generated_texts = []
                 for generation in generations[i]:

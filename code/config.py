@@ -54,6 +54,6 @@ device_map = {
     'lm_head': 1
 }
 
-data_dir = ''
-hf_datasets_cache = ''
-output_dir = ''
+data_dir = 'Data'
+# hf_datasets_cache = ''
+output_dir = 'Output'
