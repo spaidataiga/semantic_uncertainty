@@ -13,107 +13,48 @@ import torch
 import tqdm
 import wandb
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
-parser = argparse.ArgumentParser()
-parser.add_argument('--type_of_question', type=str)
-parser.add_argument('--num_generations_per_prompt', type=int, default=5)
-# parser.add_argument('--fraction_of_data_to_use', type=float, default=0.9)
-parser.add_argument('--model', type=str, default='opt-350m')
-parser.add_argument('--run_id', type=str, default='run_1')
-parser.add_argument('--temperature', type=float, default='1.0')
-parser.add_argument('--num_beams', type=int, default='5')
-parser.add_argument('--decoding_method', type=str, default='beam_search')
-parser.add_argument('--top_p', type=float, default=1.0)
-parser.add_argument('--dataset', type=str, default='coqa')
-parser.add_argument('--add_context', type=bool, default=False)
-
-args = parser.parse_args()
-
-wandb.init(project='nlg_uncertainty', id=args.run_id, config=args, resume='allow')
-
-run_name = wandb.run.name
-
-device = 'cuda'
-
-# Set a seed value
-seed_value = 10
-# 1. Set `PYTHONHASHSEED` environment variable at a fixed value
+from transformers import BitsAndBytesConfig
 import os
 
-model_name = "mistralai/Mistral-7B-Instruct-v0.1" #"/projects/copenlu/data/models/models--google--gemma-7b-it/"
-
-os.environ['PYTHONHASHSEED'] = str(seed_value)
-# 2. Set `python` built-in pseudo-random generator at a fixed value
-import random
-
-random.seed(seed_value)
-# 3. Set `numpy` pseudo-random generator at a fixed value
-np.random.seed(seed_value)
-
-#Fix torch random seed
-torch.manual_seed(seed_value)
-
-# os.environ["HF_DATASETS_CACHE"] = config.hf_datasets_cache
-
-model = AutoModelForCausalLM.from_pretrained(model_name,
-                                            #  torch_dtype=torch.float16,
-                                             load_in_4bit=True,
-                                             attn_implementation="flash_attention_2",
-                                             device_map="auto").cuda()
-
-# if args.model == 'opt-30b':
-#     accelerate.dispatch_model(model, device_map=config.device_map)
-
-tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False) #cache_dir=config.hf_cache_dir)
-
-test_df = pd.read_pickle("Data/Temporal_partialcontext4.pkl").iloc[:100] # Take first 100
-dataset = datasets.Dataset.from_pandas(test_df)
-
-# dataset = datasets.load_from_disk(f'{config.output_dir}/coqa_dataset')
-id_to_question_mapping = dict(zip(dataset['id'], dataset['question']))
-
-
-# if args.fraction_of_data_to_use < 1.0:
-#     train_dataset = dataset.train_test_split(test_size=(1 - args.fraction_of_data_to_use), seed=seed_value)['train']
-# else:
-#     train_dataset = dataset
-
-
-def encode_w_context(examples):
-    return tokenizer(examples['original_text'] + ' Q: ' + examples['question'] + ' A:', truncation=False, padding=False)
-
-def encode(examples):
-    return tokenizer(' Q: ' + examples['question'] + ' A:', truncation=False, padding=False)
-
-
-def encode_and_format_dataset(dataset, add_context=False):
-    if add_context:
-        dataset = dataset.map(encode_w_context, batched=False, load_from_cache_file=False)
+def encode_as_chat(d): ############ UPDATE WITH DISPUTABLE DATA WHEN NEEDED
+  if args.add_context:
+    if args.replace:
+        user = {
+            "role": "user",
+            "content": "You'll be given a question and a context about the article and answer it with a one word. Answer the [Question]. This article is about %s. [Context]: %s [Question]: %s [Answer]:" % (
+           d["subj"], d["context"].replace('[ENTITY]', d['replace_name']), d["question"])
+        }
     else:
-        dataset = dataset.map(encode, batched=False, load_from_cache_file=False)
+        user = {
+            "role": "user",
+            "content": "You'll be given a question and a context about the article and answer it with a one word. Answer the [Question]. This article is about %s. [Context]: %s [Question]: %s [Answer]:" % (
+            d["subj"], d["context"].replace('[ENTITY]', d['obj']),  d["question"])
+        }
+  else:
+      user = {
+          "role": "user",
+          "content": "You'll be given a question about the article and answer it with a one word. Answer the [Question]. This article is about %s. [Question]: %s [Answer]:" % (
+          d["subj"], d["question"])
+      }
+
+  chat = [ user ]
+  prompt = tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
+  inputs = tokenizer(prompt, add_special_tokens=False)
+  return inputs
+
+def encode_and_format_dataset(dataset):
+
+    dataset = dataset.map(encode_as_chat, batched=False, load_from_cache_file=False)
         
     dataset.set_format(type='torch', columns=['input_ids', 'attention_mask'], output_all_columns=True)
 
     return dataset
 
-
-questions = encode_and_format_dataset(dataset, add_context=args.add_context)
-
-dataloader = torch.utils.data.DataLoader(questions, batch_size=1)
-
-period_token_id = tokenizer('. ')['input_ids'][1]
-eos_tokens = ['Question:', ' Question:', '\n', 'Answer:', ' Answer:', 'Q:']
-question_framing_ids = [[tokenizer(eos_token)['input_ids'][1]] for eos_token in eos_tokens]
-squad_metric = evaluate.load("squad")
-rouge = evaluate.load('rouge')
-exact_match_metric = evaluate.load("exact_match")
-
-
 def get_generations(model, dataloader, number_of_generations):
     """For a given model, produce a number of generation """
 
     with torch.no_grad():
-        max_length_of_generated_sequence = 256
+        max_length_of_generated_sequence = 10
         sequences = []
         for batch in tqdm.tqdm(dataloader):
 
@@ -157,16 +98,6 @@ def get_generations(model, dataloader, number_of_generations):
             generations = torch.reshape(generations, (-1, number_of_generations, generations.shape[-1]))
             for i in range(generations.shape[0]):
 
-                # if args.dataset == 'coqa':
-                #     sequence_dict = {
-                #         'prompt': batch['input_ids'][i].to('cpu'),
-                #         'generations': generations[i].to('cpu'),
-                #         'id': batch['id'],
-                #         'question': id_to_question_mapping[batch['id'][0]]
-                #     }
-                # elif args.dataset == 'trivia_qa':
-                #     few_shot_question = tokenizer.decode(input_ids[0])
-                # question = few_shot_question.split('Question: ')[-1].split('Answer: ')[0]
                 sequence_dict = {
                     'prompt': input_ids[0],
                     'generations': generations[i],
@@ -226,10 +157,85 @@ def get_generations(model, dataloader, number_of_generations):
 
     return sequences
 
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--type_of_question', type=str)
+    parser.add_argument('--num_generations_per_prompt', type=int, default=5)
+    parser.add_argument('--model', type=str, default='google/gemma-1.1-7b-it')
+    parser.add_argument('--run_id', type=str, default='run_1')
+    parser.add_argument('--temperature', type=float, default='1.0')
+    parser.add_argument('--num_beams', type=int, default='5')
+    parser.add_argument('--decoding_method', type=str, default='beam_search')
+    parser.add_argument('--top_p', type=float, default=1.0)
+    parser.add_argument('--dataset', type=str, default='static')
+    parser.add_argument('--add_context', type=bool, default=False)
+    parser.add_argument('--replace', type=bool, default=False)
+    parser.add_argument('--num_instances', type=int, default='0')
 
-sequences = get_generations(model, dataloader, args.num_generations_per_prompt)
+    args = parser.parse_args()
 
-pathlib.Path(f'{config.output_dir}/sequences/' + run_name).mkdir(parents=True, exist_ok=True)
+    wandb.init(project='nlg_uncertainty', id=args.run_id, config=args, resume='allow')
 
-with open(f'{config.output_dir}/sequences/{run_name}/{args.model}_generations.pkl', 'wb') as outfile:
-    pickle.dump(sequences, outfile)
+    run_name = wandb.run.name
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Set a seed value
+    seed_value = 10
+
+    os.environ['PYTHONHASHSEED'] = str(seed_value)
+    # 2. Set `python` built-in pseudo-random generator at a fixed value
+    import random
+
+    random.seed(seed_value)
+    # 3. Set `numpy` pseudo-random generator at a fixed value
+    np.random.seed(seed_value)
+
+    #Fix torch random seed
+    torch.manual_seed(seed_value)
+
+    # os.environ["HF_DATASETS_CACHE"] = config.hf_datasets_cache
+
+    quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+
+    model = AutoModelForCausalLM.from_pretrained(args.model,
+                                                quantization_config=quantization_config,
+                                                attn_implementation="flash_attention_2",
+                                                device_map="cuda")
+
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
+
+    if args.dataset == 'static':
+        df = pd.read_csv("Data/Static_total.csv")
+        dataset = datasets.Dataset.from_pandas(df)
+    elif args.dataset == 'temporal':
+        df = pd.read_csv("Data/Temporal_total.csv")
+        dataset = datasets.Dataset.from_pandas(df)
+    elif args.dataset == 'disputable':
+        print("YOU HAVE NOT YET IMPLEMENTED THIS DATASET")
+    else:
+        print("Unacceptable dataset")
+        
+    if args.num_instances > 0:
+        df = df.iloc[:args.num_instances]
+        dataset = datasets.Dataset.from_pandas(df)
+
+    id_to_question_mapping = dict(zip(dataset['id'], dataset['question']))
+
+    questions = encode_and_format_dataset(dataset)
+
+    dataloader = torch.utils.data.DataLoader(questions, batch_size=1)
+
+    period_token_id = tokenizer('. ')['input_ids'][1]
+    eos_tokens = ['Question:', ' Question:', '\n', 'Answer:', ' Answer:', 'Q:']
+    question_framing_ids = [[tokenizer(eos_token)['input_ids'][1]] for eos_token in eos_tokens]
+    squad_metric = evaluate.load("squad")
+    rouge = evaluate.load('rouge')
+    exact_match_metric = evaluate.load("exact_match")
+
+    sequences = get_generations(model, dataloader, args.num_generations_per_prompt)
+
+    pathlib.Path(f'{config.output_dir}/sequences/' + run_name).mkdir(parents=True, exist_ok=True)
+
+    with open(f'{config.output_dir}/sequences/{run_name}/{args.model}_generations.pkl', 'wb') as outfile:
+        pickle.dump(sequences, outfile)
