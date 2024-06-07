@@ -200,8 +200,8 @@ if __name__ == "__main__":
 
     model = AutoModelForCausalLM.from_pretrained(args.model,
                                                 quantization_config=quantization_config,
-                                                attn_implementation="flash_attention_2",
-                                                device_map="cuda")
+                                                # attn_implementation="flash_attention_2",
+                                                device_map="auto")
 
     tokenizer = AutoTokenizer.from_pretrained(args.model)
 
