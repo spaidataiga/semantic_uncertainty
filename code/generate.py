@@ -15,6 +15,7 @@ import wandb
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers import BitsAndBytesConfig
 import os
+import pdb
 
 def encode_as_chat(d): ############ UPDATE WITH DISPUTABLE DATA WHEN NEEDED
   if args.add_context:
@@ -60,6 +61,8 @@ def get_generations(model, dataloader, number_of_generations):
 
             input_ids = torch.cat(batch['input_ids']).to(device).reshape(
                 1, -1) if args.dataset == 'trivia_qa' else batch['input_ids'].to(device)
+            
+            # pdb.set_trace()
             if args.decoding_method == 'beam_search':
                 most_likely_generation = model.generate(input_ids,
                                                         num_beams=5,
@@ -101,7 +104,7 @@ def get_generations(model, dataloader, number_of_generations):
                 sequence_dict = {
                     'prompt': input_ids[0],
                     'generations': generations[i],
-                    'id': batch['question_id'],
+                    'id': batch['id'],
                     'question': batch['question']
                 }
 
@@ -131,14 +134,13 @@ def get_generations(model, dataloader, number_of_generations):
 
                     sequence_dict[rouge_type + '_to_target'] = 0.0
 
-                sequence_dict['answer'] = batch['answer']['text'] if args.dataset == 'coqa' else batch['answer']
+                sequence_dict['answer'] = batch['obj']
                 sequence_dict['additional_answers'] = [x[0] for x in batch['additional_answers']
                                                       ] if args.dataset == 'coqa' else None
 
                 sequence_dict['exact_match'] = 0.0
 
-                reference_answers = batch['answer']['text'] + [x[0] for x in batch['additional_answers']
-                                                              ] if args.dataset == 'coqa' else batch['answer']
+                reference_answers = batch['obj']
 
                 for answer in reference_answers:
                     predictions = [sequence_dict['most_likely_generation'].lstrip()]
@@ -150,7 +152,7 @@ def get_generations(model, dataloader, number_of_generations):
                     sequence_dict['exact_match'] = max(results['exact_match'], sequence_dict['exact_match'])
                     rouge_results = rouge.compute(predictions=predictions, references=references)
                     for rouge_type in rouge_types:
-                        sequence_dict[rouge_type + '_to_target'] = max(rouge_results[rouge_type].mid.fmeasure,
+                        sequence_dict[rouge_type + '_to_target'] = max(rouge_results[rouge_type], #.fmeasure,
                                                                        sequence_dict[rouge_type + '_to_target'])
 
                 sequences.append(sequence_dict)
@@ -237,5 +239,5 @@ if __name__ == "__main__":
 
     pathlib.Path(f'{config.output_dir}/sequences/' + run_name).mkdir(parents=True, exist_ok=True)
 
-    with open(f'{config.output_dir}/sequences/{run_name}/{args.model}_generations.pkl', 'wb') as outfile:
+    with open(f"{config.output_dir}/sequences/{run_name}/{args.model.split('/')[1]}_generations.pkl", 'wb') as outfile:
         pickle.dump(sequences, outfile)
