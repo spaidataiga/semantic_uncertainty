@@ -3,12 +3,12 @@ import csv
 import os
 import pickle
 import random
-
+# import pdb
 import evaluate
 import numpy as np
 import torch
 from tqdm import tqdm
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
+from transformers import AutoModelForSequenceClassification, AutoTokenizer, BitsAndBytesConfig
 
 import config
 import wandb
@@ -32,7 +32,7 @@ random.seed(seed_value)
 
 np.random.seed(seed_value)
 
-model_name = "mistralai/Mistral-7B-Instruct-v0.1" #"/projects/copenlu/data/models/models--google--gemma-7b-it/"
+# args.generation_model = "mistralai/Mistral-7B-Instruct-v0.1" #"/projects/copenlu/data/models/models--google--gemma-7b-it/"
 
 
 #Fix torch random seed
@@ -40,7 +40,7 @@ torch.manual_seed(seed_value)
 
 # os.environ["HF_DATASETS_CACHE"] = config.hf_datasets_cache
 
-generation_tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False, token=config.hf_token) # cache_dir=config.hf_cache_dir)
+generation_tokenizer = AutoTokenizer.from_pretrained(args.generation_model, use_fast=False) #, token=config.hf_token) # cache_dir=config.hf_cache_dir)
 
 
 tokenizer = AutoTokenizer.from_pretrained("microsoft/deberta-large-mnli")
@@ -50,7 +50,7 @@ wandb.init(project='nlg_uncertainty', id=args.run_id, config=args, resume='allow
 
 run_name = wandb.run.name
 
-with open(f'{config.output_dir}/{run_name}/{args.generation_model}_generations.pkl', 'rb') as infile:
+with open(f"{config.output_dir}/sequences/{run_name}/{args.generation_model.split('/')[1]}_generations.pkl", 'rb') as infile:
     sequences = pickle.load(infile)
 
 result_dict = {}
@@ -60,7 +60,7 @@ meteor = evaluate.load('meteor')
 deberta_predictions = []
 
 for sample in tqdm(sequences):
-    question = sample['question']
+    question = sample['question'][0]
     if 'cleaned_generated_texts' in sample:
         generated_texts = sample['cleaned_generated_texts']
     else:
@@ -90,7 +90,7 @@ for sample in tqdm(sequences):
         # Evalauate semantic similarity
         for i, reference_answer in enumerate(unique_generated_texts):
             for j in range(i + 1, len(unique_generated_texts)):
-
+                # pdb.set_trace()
                 answer_list_1.append(unique_generated_texts[i])
                 answer_list_2.append(unique_generated_texts[j])
 
@@ -133,16 +133,16 @@ for sample in tqdm(sequences):
         results = rouge.compute(predictions=answer_list_1, references=answer_list_2)
 
         for rouge_type in rouge_types:
-            syntactic_similarities[rouge_type] = results[rouge_type].mid.fmeasure
+            syntactic_similarities[rouge_type] = results[rouge_type] #.mid.fmeasure
 
-    result_dict[id_] = {
+    result_dict[id_.item()] = {
         'syntactic_similarities': syntactic_similarities,
         'has_semantically_different_answers': has_semantically_different_answers
     }
     list_of_semantic_set_ids = [semantic_set_ids[x] for x in generated_texts]
-    result_dict[id_]['semantic_set_ids'] = list_of_semantic_set_ids
+    result_dict[id_.item()]['semantic_set_ids'] = list_of_semantic_set_ids
 
-with open('deberta_predictions_{}.csv'.format(args.run_id), 'w', encoding='UTF8', newline='') as f:
+with open(f"{config.output_dir}/deberta/predictions_{args.run_id}.csv", 'w', encoding='UTF8', newline='') as f:
     writer = csv.writer(f)
     # write the header
     writer.writerow(['qa_1', 'qa_2', 'prediction'])
@@ -150,5 +150,5 @@ with open('deberta_predictions_{}.csv'.format(args.run_id), 'w', encoding='UTF8'
 
 print(result_dict)
 
-with open(f'{config.output_dir}/{run_name}/{args.generation_model}_generations_similarities.pkl', 'wb') as outfile:
+with open(f"{config.output_dir}/sequences/{run_name}/{args.generation_model.split('/')[1]}_generations_similarities.pkl", 'wb') as outfile:
     pickle.dump(result_dict, outfile)

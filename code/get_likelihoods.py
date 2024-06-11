@@ -6,8 +6,9 @@ import random
 import numpy as np
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
+from transformers import BitsAndBytesConfig
 import wandb
+# import pdb
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--evaluation_model', type=str, default='opt-350m')
@@ -30,7 +31,7 @@ random.seed(seed_value)
 
 np.random.seed(seed_value)
 
-model_name = "mistralai/Mistral-7B-Instruct-v0.1" # "/projects/copenlu/data/models/models--google--gemma-7b-it/"
+# model_name = "mistralai/Mistral-7B-Instruct-v0.1" # "/projects/copenlu/data/models/models--google--gemma-7b-it/"
 
 
 #Fix torch random seed
@@ -45,30 +46,31 @@ torch.manual_seed(seed_value)
 #                                           use_fast=False,
 #                                           cache_dir=config.data_dir)
 
-model = AutoModelForCausalLM.from_pretrained(model_name,
-                                            #  torch_dtype=torch.float16,
-                                            load_in_4bit=True,
-                                             attn_implementation="flash_attention_2",
-                                             device_map="auto",
-                                             token=config.hf_token).cuda()
+
+quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+
+model = AutoModelForCausalLM.from_pretrained(args.evaluation_model,
+                                            quantization_config=quantization_config,
+                                            # attn_implementation="flash_attention_2",
+                                            device_map="auto")
 
 
-tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False, token=config.hf_token) # cache_dir=config.hf_cache_dir)
+tokenizer = AutoTokenizer.from_pretrained(args.evaluation_model, use_fast=False) # token=config.hf_token) # cache_dir=config.hf_cache_dir)
 
+tokenizer.pad_token = tokenizer.bos_token
+tokenizer.padding_side = "left"
 
 wandb.init(project='nlg_uncertainty', id=args.run_id, config=args, resume='allow')
 
 run_name = wandb.run.name
 
-opt_models = ['opt-125m', 'opt-350m', 'opt-1.3b', 'opt-2.7b', 'opt-6.7b', 'opt-13b', 'opt-30b']
-
-with open(f'{config.output_dir}/{run_name}/{args.generation_model}_generations.pkl', 'rb') as infile:
+with open(f"{config.output_dir}/sequences/{run_name}/{args.generation_model.split('/')[1]}_generations.pkl", 'rb') as infile:
     sequences = pickle.load(infile)
 
-with open(f'{config.output_dir}/{run_name}/{args.generation_model}_generations_similarities.pkl', 'rb') as infile:
+with open(f"{config.output_dir}/sequences/{run_name}/{args.generation_model.split('/')[1]}_generations_similarities.pkl", 'rb') as infile:
     similarities_dict = pickle.load(infile)
 
-
+# pdb.set_trace()
 def get_neg_loglikelihoods(model, sequences):
 
     with torch.no_grad():
@@ -92,7 +94,6 @@ def get_neg_loglikelihoods(model, sequences):
             for generation_index in range(generations.shape[0]):
                 prompt = prompt[prompt != tokenizer.pad_token_id]
                 generation = generations[generation_index][generations[generation_index] != tokenizer.pad_token_id]
-
                 # This computation of the negative log likelihoods follows this tutorial: https://huggingface.co/docs/transformers/perplexity
                 target_ids = generation.clone()
                 target_ids[:len(prompt)] = -100
@@ -152,16 +153,18 @@ def get_neg_loglikelihoods(model, sequences):
             result_dict['average_neg_log_likelihood_of_most_likely_gen'] = average_neg_log_likelihood_of_most_likely_gen
             result_dict[
                 'average_neg_log_likelihood_of_second_most_likely_gen'] = average_neg_log_likelihood_of_second_most_likely_gen
+            
             result_dict['neg_log_likelihood_of_most_likely_gen'] = neg_log_likelihood_of_most_likely_gen
-            result_dict['semantic_set_ids'] = torch.tensor(similarities_dict[id_[0]]['semantic_set_ids'], device=device)
-            result_dict['id'] = id_
+            # breakpoint()
+            result_dict['semantic_set_ids'] = torch.tensor(similarities_dict[id_[0].item()]['semantic_set_ids'], device=device)
+            result_dict['id'] = id_[0].item()
             result.append(result_dict)
 
         return result
 
-
+# pdb.set_trace()
 likelihoods = get_neg_loglikelihoods(model, sequences)
 
-with open(f'{config.data_dir}/{run_name}/{args.generation_model}_generations_{args.evaluation_model}_likelihoods.pkl',
+with open(f"{config.output_dir}/sequences/{run_name}/{args.generation_model.split('/')[1]}_generations_{args.evaluation_model.split('/')[1]}_likelihoods.pkl",
           'wb') as outfile:
     pickle.dump(likelihoods, outfile)

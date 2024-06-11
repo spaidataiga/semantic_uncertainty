@@ -23,13 +23,13 @@ def encode_as_chat(d): ############ UPDATE WITH DISPUTABLE DATA WHEN NEEDED
         user = {
             "role": "user",
             "content": "You'll be given a question and a context about the article and answer it with a one word. Answer the [Question]. This article is about %s. [Context]: %s [Question]: %s [Answer]:" % (
-           d["subj"], d["context"].replace('[ENTITY]', d['replace_name']), d["question"])
+           d["subj"], d["context"].replace('[ENTITY]', d['replace_name'].lower()), d["question"])
         }
     else:
         user = {
             "role": "user",
             "content": "You'll be given a question and a context about the article and answer it with a one word. Answer the [Question]. This article is about %s. [Context]: %s [Question]: %s [Answer]:" % (
-            d["subj"], d["context"].replace('[ENTITY]', d['obj']),  d["question"])
+            d["subj"], d["context"].replace('[ENTITY]', d['obj']).lower(),  d["question"])
         }
   else:
       user = {
@@ -55,12 +55,11 @@ def get_generations(model, dataloader, number_of_generations):
     """For a given model, produce a number of generation """
 
     with torch.no_grad():
-        max_length_of_generated_sequence = 10
+        max_length_of_generated_sequence = 20
         sequences = []
         for batch in tqdm.tqdm(dataloader):
 
-            input_ids = torch.cat(batch['input_ids']).to(device).reshape(
-                1, -1) if args.dataset == 'trivia_qa' else batch['input_ids'].to(device)
+            input_ids =  batch['input_ids'].to(device)
             
             # pdb.set_trace()
             if args.decoding_method == 'beam_search':
@@ -135,8 +134,7 @@ def get_generations(model, dataloader, number_of_generations):
                     sequence_dict[rouge_type + '_to_target'] = 0.0
 
                 sequence_dict['answer'] = batch['obj']
-                sequence_dict['additional_answers'] = [x[0] for x in batch['additional_answers']
-                                                      ] if args.dataset == 'coqa' else None
+                sequence_dict['additional_answers'] = None
 
                 sequence_dict['exact_match'] = 0.0
 
@@ -171,7 +169,7 @@ if __name__ == "__main__":
     parser.add_argument('--top_p', type=float, default=1.0)
     parser.add_argument('--dataset', type=str, default='static')
     parser.add_argument('--add_context', type=bool, default=False)
-    parser.add_argument('--replace', type=bool, default=False)
+    parser.add_argument('--replace', type=bool, default=True)
     parser.add_argument('--num_instances', type=int, default='0')
 
     args = parser.parse_args()

@@ -33,19 +33,19 @@ np.random.seed(seed_value)
 #Fix torch random seed
 torch.manual_seed(seed_value)
 
-model_name = "mistralai/Mistral-7B-Instruct-v0.1"
+# model_name = "mistralai/Mistral-7B-Instruct-v0.1"
 
 # os.environ["HF_DATASETS_CACHE"] = config.hf_datasets_cache
 
-generation_tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False, cache_dir=config.data_dir, token=config.hf_token)
+generation_tokenizer = AutoTokenizer.from_pretrained(args.generation_model, use_fast=False, cache_dir=config.data_dir) #, token=config.hf_token)
 
 wandb.init(project='nlg_uncertainty', id=args.run_id, config=args, resume='allow')
 
 run_name = wandb.run.name
 
-tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False, cache_dir=config.data_dir, token=config.hf_token)
+tokenizer = AutoTokenizer.from_pretrained(args.generation_model, use_fast=False, cache_dir=config.data_dir) # token=config.hf_token)
 
-with open(f'{config.output_dir}/{run_name}/{args.generation_model}_generations.pkl', 'rb') as infile:
+with open(f"{config.output_dir}/sequences/{run_name}/{args.generation_model.split('/')[1]}_generations.pkl", 'rb') as infile:
     sequences = pickle.load(infile)
 
 cleaned_sequences = []
@@ -77,5 +77,5 @@ for sample in tqdm(sequences):
     sample['cleaned_generations'] = cleaned_generations
     cleaned_sequences.append(sample)
 
-with open(f'{config.output_dir}/{run_name}/{args.generation_model}_generations.pkl', 'wb') as outfile:
+with open(f"{config.output_dir}/sequences/{run_name}/{args.generation_model.split('/')[1]}_generations.pkl", 'wb') as outfile:
     pickle.dump(cleaned_sequences, outfile)

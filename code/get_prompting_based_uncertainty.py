@@ -5,14 +5,15 @@ import pickle
 import random
 
 import accelerate
+from transformers import BitsAndBytesConfig
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import sklearn
 import torch
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+import pdb
 import config
 #sns.color_palette("pastel")
 import wandb
@@ -45,22 +46,26 @@ args = parser.parse_args()
 
 wandb.init(project='nlg_uncertainty', id=args.run_id_for_few_shot_prompt, config=args, resume='allow')
 
-model_name = "mistralai/Mistral-7B-Instruct-v0.1"
+# model_name = "mistralai/Mistral-7B-Instruct-v0.1"    
 
-generation_tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False, cache_dir=config.data_dir, token=config.hf_token)
-model = AutoModelForCausalLM.from_pretrained(model_name,
+quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+generation_tokenizer = AutoTokenizer.from_pretrained(args.generation_model, use_fast=False, cache_dir=config.data_dir)# token=config.hf_token)
+model = AutoModelForCausalLM.from_pretrained(args.generation_model,
                                             #  torch_dtype=torch.float16,
-                                            load_in_4bit=True,
-                                             cache_dir=config.data_dir,token=config.hf_token).cuda()
+                                            quantization_config=quantization_config,
+                                                # attn_implementation="flash_attention_2",
+                                            device_map="auto")
 
-if model_name == 'opt-30b':
-    accelerate.dispatch_model(model, device_map=device_map)
-    print(model.hf_device_map)
-    device = torch.device('cuda:1')
+
+
+# if args.generation_model == 'opt-30b':
+#     accelerate.dispatch_model(model, device_map=device_map)
+#     print(model.hf_device_map)
+#     device = torch.device('cuda:1')
 
 run_name = wandb.run.name
 
-with open(f'{config.output_dir} /{run_name}/{model_name}_generations.pkl', 'rb') as infile:
+with open(f"{config.output_dir}/sequences/{run_name}/{args.generation_model.split('/')[1]}_generations.pkl", 'rb') as infile:
     sequences_for_few_shot_prompt = pickle.load(infile)
 
 wandb.finish()
@@ -70,10 +75,12 @@ wandb.finish()
 subset_of_sequences_for_few_shot_prompt = sequences_for_few_shot_prompt[-10:]
 number_of_few_shot_samples = 5
 
+pdb.set_trace()
 prompt_template = 'Question: {} \n Here are some ideas that were brainstormed:{}\n Possible answer:{}\n Is the possible answer:\n (A) True\n (B) False\n The possible answer is:'
 few_shot_promopt = ''
 for sequence in subset_of_sequences_for_few_shot_prompt:
-    question = sequence['question']
+    question = sequence['question'][0]
+    breakpoint()
     question = question.split('Question: ')[-1].split('Answer: ')[0]
     prompt = sequence['prompt']
     generated_texts = '\n'.join(sequence['cleaned_generated_texts'][:number_of_few_shot_samples])
@@ -126,5 +133,7 @@ with torch.no_grad():
     p_true_auroc = sklearn.metrics.roc_auc_score(1 - torch.tensor(corrects), torch.tensor(p_trues))
 
     # Store p_true aurocs in a pickle file
-    with open(f'{config.output_dir}/{run_name}/{model_name}_p_true_aurocs.pkl', 'wb') as outfile:
+    with open(f"{config.output_dir}/sequences/{run_name}/{args.generation_model.split('/')[1]}_p_true_aurocs.pkl", 'wb') as outfile:
         pickle.dump(p_true_auroc, outfile)
+
+
